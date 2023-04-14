@@ -1,6 +1,7 @@
 //! Copyright (c) 2016 Google Inc (lewinb@google.com).
 
 use base64::{engine::general_purpose::URL_SAFE, Engine};
+use secrecy::SecretString;
 use serde::Serialize;
 
 use crate::custom_service_account::ApplicationCredentials;
@@ -49,7 +50,7 @@ impl<'a> Claims<'a> {
         }
     }
 
-    pub(crate) fn to_jwt(&self, signer: &Signer) -> Result<String, Error> {
+    pub(crate) fn to_jwt(&self, signer: &Signer) -> Result<SecretString, Error> {
         let mut jwt = String::new();
         URL_SAFE.encode_string(GOOGLE_RS256_HEAD, &mut jwt);
         jwt.push('.');
@@ -58,6 +59,6 @@ impl<'a> Claims<'a> {
         let signature = signer.sign(jwt.as_bytes())?;
         jwt.push('.');
         URL_SAFE.encode_string(&signature, &mut jwt);
-        Ok(jwt)
+        Ok(SecretString::from(jwt))
     }
 }

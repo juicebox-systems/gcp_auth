@@ -1,3 +1,4 @@
+use secrecy::SecretString;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::authentication_manager::ServiceAccount;
 use crate::error::Error;
 use crate::types::{HyperClient, Signer, Token};
-use crate::util::HyperExt;
+use crate::util::{serialize_secret, HyperExt};
 
 /// A custom service account containing credentials
 ///
@@ -73,7 +74,7 @@ impl CustomServiceAccount {
     }
 
     /// The private key as found in the credentials
-    pub fn private_key_pem(&self) -> &str {
+    pub fn private_key_pem(&self) -> &SecretString {
         &self.credentials.private_key
     }
 }
@@ -97,11 +98,15 @@ impl ServiceAccount for CustomServiceAccount {
         use crate::jwt::Claims;
         use crate::jwt::GRANT_TYPE;
         use hyper::header;
+        use secrecy::ExposeSecret;
         use url::form_urlencoded;
 
         let jwt = Claims::new(&self.credentials, scopes, None).to_jwt(&self.signer)?;
         let rqbody = form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(&[("grant_type", GRANT_TYPE), ("assertion", jwt.as_str())])
+            .extend_pairs(&[
+                ("grant_type", GRANT_TYPE),
+                ("assertion", jwt.expose_secret()),
+            ])
             .finish();
 
         let request = hyper::Request::post(&self.credentials.token_uri)
@@ -131,7 +136,8 @@ pub(crate) struct ApplicationCredentials {
     /// private_key_id
     pub(crate) private_key_id: Option<String>,
     /// private_key
-    pub(crate) private_key: String,
+    #[serde(serialize_with = "serialize_secret")]
+    pub(crate) private_key: SecretString,
     /// client_email
     pub(crate) client_email: String,
     /// client_id

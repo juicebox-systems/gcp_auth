@@ -4,12 +4,13 @@ use std::sync::RwLock;
 use async_trait::async_trait;
 use hyper::body::Body;
 use hyper::{Method, Request};
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 use crate::authentication_manager::ServiceAccount;
 use crate::error::Error;
 use crate::types::{HyperClient, Token};
-use crate::util::HyperExt;
+use crate::util::{serialize_secret, HyperExt};
 
 #[derive(Debug)]
 pub(crate) struct DefaultAuthorizedUser {
@@ -88,9 +89,11 @@ impl ServiceAccount for DefaultAuthorizedUser {
 #[derive(Serialize, Debug)]
 struct RefreshRequest<'a> {
     client_id: &'a str,
-    client_secret: &'a str,
+    #[serde(serialize_with = "serialize_secret")]
+    client_secret: &'a SecretString,
     grant_type: &'a str,
-    refresh_token: &'a str,
+    #[serde(serialize_with = "serialize_secret")]
+    refresh_token: &'a SecretString,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -98,11 +101,13 @@ struct UserCredentials {
     /// Client id
     pub(crate) client_id: String,
     /// Client secret
-    pub(crate) client_secret: String,
+    #[serde(serialize_with = "serialize_secret")]
+    pub(crate) client_secret: SecretString,
     /// Project ID
     pub(crate) quota_project_id: Option<String>,
     /// Refresh Token
-    pub(crate) refresh_token: String,
+    #[serde(serialize_with = "serialize_secret")]
+    pub(crate) refresh_token: SecretString,
     /// Type
     pub(crate) r#type: String,
 }

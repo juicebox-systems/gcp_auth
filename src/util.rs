@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use serde::de;
+use secrecy::ExposeSecret;
+use serde::{de, ser::Serializer, Serialize};
 
 use crate::error::Error;
 
@@ -34,4 +35,12 @@ impl HyperExt for hyper::Response<hyper::body::Body> {
         let token = serde_json::from_slice(&body).map_err(Error::ParsingError)?;
         Ok(token)
     }
+}
+
+/// Used in conjunction with the [`secrecy`] crate to serialize secrets.
+pub(crate) fn serialize_secret<Ser: Serializer>(
+    secret: &secrecy::SecretString,
+    serializer: Ser,
+) -> Result<Ser::Ok, Ser::Error> {
+    secret.expose_secret().serialize(serializer)
 }

@@ -3,6 +3,7 @@ use std::process::Command;
 use std::sync::RwLock;
 
 use async_trait::async_trait;
+use secrecy::SecretString;
 use time::Duration;
 use which::which;
 
@@ -38,7 +39,7 @@ impl GCloudAuthorizedUser {
 
     fn token(gcloud: &Path) -> Result<Token, Error> {
         Ok(Token::from_string(
-            run(gcloud, &["auth", "print-access-token", "--quiet"])?,
+            SecretString::from(run(gcloud, &["auth", "print-access-token", "--quiet"])?),
             DEFAULT_TOKEN_DURATION,
         ))
     }
@@ -79,6 +80,7 @@ fn run(gcloud: &Path, cmd: &[&str]) -> Result<String, Error> {
 
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret;
     use time::{Duration, OffsetDateTime};
 
     use super::*;
@@ -104,11 +106,11 @@ mod tests {
     /// functionality is tested here.
     #[test]
     fn test_token_from_string() {
-        let s = String::from("abc123");
+        let s = SecretString::from(String::from("abc123"));
         let token = Token::from_string(s, DEFAULT_TOKEN_DURATION);
         let expires = OffsetDateTime::now_utc() + DEFAULT_TOKEN_DURATION;
 
-        assert_eq!(token.as_str(), "abc123");
+        assert_eq!(token.as_str().expose_secret(), "abc123");
         assert!(!token.has_expired());
         assert!(token.expires_at() < expires + Duration::seconds(1));
         assert!(token.expires_at() > expires - Duration::seconds(1));

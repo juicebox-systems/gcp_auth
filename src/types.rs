@@ -7,11 +7,14 @@ use ring::{
     rand::SystemRandom,
     signature::{RsaKeyPair, RSA_PKCS1_SHA256},
 };
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserializer;
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 
+use crate::util::serialize_secret;
 use crate::Error;
+
 /// Represents an access token. All access tokens are Bearer tokens.
 ///
 /// Tokens should not be cached, the [`AuthenticationManager`] handles the correct caching
@@ -24,14 +27,14 @@ use crate::Error;
 /// [`AuthenticationManager`]: crate::AuthenticationManager
 /// [`Display`]: fmt::Display
 /// [`Debug`]: fmt::Debug
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Token {
     #[serde(flatten)]
     inner: Arc<InnerToken>,
 }
 
 impl Token {
-    pub(crate) fn from_string(access_token: String, expires_in: Duration) -> Self {
+    pub(crate) fn from_string(access_token: SecretString, expires_in: Duration) -> Self {
         Token {
             inner: Arc::new(InnerToken {
                 access_token,
@@ -50,9 +53,10 @@ impl fmt::Debug for Token {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct InnerToken {
-    access_token: String,
+    #[serde(serialize_with = "serialize_secret")]
+    access_token: SecretString,
     #[serde(
         deserialize_with = "deserialize_time",
         rename(deserialize = "expires_in")
@@ -70,7 +74,7 @@ impl Token {
     }
 
     /// Get str representation of the token.
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &SecretString {
         &self.inner.access_token
     }
 
@@ -87,8 +91,9 @@ pub struct Signer {
 }
 
 impl Signer {
-    pub(crate) fn new(pem_pkcs8: &str) -> Result<Self, Error> {
-        let private_keys = rustls_pemfile::pkcs8_private_keys(&mut pem_pkcs8.as_bytes());
+    pub(crate) fn new(pem_pkcs8: &SecretString) -> Result<Self, Error> {
+        let private_keys =
+            rustls_pemfile::pkcs8_private_keys(&mut pem_pkcs8.expose_secret().as_bytes());
 
         let key = match private_keys {
             Ok(mut keys) if !keys.is_empty() => {
@@ -161,7 +166,7 @@ mod tests {
     fn test_serialise() {
         let token = Token {
             inner: Arc::new(InnerToken {
-                access_token: "abc123".to_string(),
+                access_token: SecretString::from("abc123".to_string()),
                 expires_at: OffsetDateTime::from_unix_timestamp(123).unwrap(),
             }),
         };
@@ -179,7 +184,7 @@ mod tests {
         let token: Token = serde_json::from_str(s).unwrap();
         let expires = OffsetDateTime::now_utc() + Duration::seconds(100);
 
-        assert_eq!(token.as_str(), "abc123");
+        assert_eq!(token.as_str().expose_secret(), "abc123");
 
         // Testing time is always racy, give it 1s leeway.
         let expires_at = token.expires_at();
