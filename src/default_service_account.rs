@@ -34,7 +34,7 @@ impl DefaultServiceAccount {
             .unwrap()
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(level = "trace", skip_all)]
     async fn get_token(client: &HyperClient) -> Result<Token, Error> {
         tracing::debug!("Getting token from GCP instance metadata server");
         let req = Self::build_token_request(Self::DEFAULT_TOKEN_GCP_URI);

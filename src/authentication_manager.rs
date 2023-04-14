@@ -39,7 +39,7 @@ impl AuthenticationManager {
     ///    if it succeeds, use the default service account as the token source.
     /// 4. Look for credentials in `.config/gcloud/application_default_credentials.json`;
     ///    if found, use these credentials to request refresh tokens.
-    #[tracing::instrument]
+    #[tracing::instrument(level = "trace", skip_all)]
     pub async fn new() -> Result<Self, Error> {
         tracing::debug!("Initializing gcp_auth");
         if let Some(service_account) = CustomServiceAccount::from_env()? {

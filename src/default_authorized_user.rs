@@ -47,7 +47,7 @@ impl DefaultAuthorizedUser {
             .unwrap()
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(level = "trace", skip_all)]
     async fn get_token(cred: &UserCredentials, client: &HyperClient) -> Result<Token, Error> {
         let req = Self::build_token_request(&RefreshRequest {
             client_id: &cred.client_id,
