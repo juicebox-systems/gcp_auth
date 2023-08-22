@@ -24,7 +24,7 @@ use crate::Error;
 /// [`AuthenticationManager`]: crate::AuthenticationManager
 /// [`Display`]: fmt::Display
 /// [`Debug`]: fmt::Debug
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Token {
     #[serde(flatten)]
     inner: Arc<InnerToken>,
@@ -50,7 +50,7 @@ impl fmt::Debug for Token {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct InnerToken {
     access_token: String,
     #[serde(
