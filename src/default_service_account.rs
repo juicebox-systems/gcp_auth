@@ -52,7 +52,7 @@ impl MetadataServiceAccount {
             );
             retries += 1;
             if retries >= RETRY_COUNT {
-                return Err(Error::ConnectionError(err));
+                return Err(Error::ConnectionError(err.message().to_string()));
             }
         };
 
@@ -65,12 +65,15 @@ impl ServiceAccount for MetadataServiceAccount {
     async fn project_id(&self, client: &HyperClient) -> Result<String, Error> {
         tracing::debug!("Getting project ID from GCP instance metadata server");
         let req = Self::build_token_request(Self::DEFAULT_PROJECT_ID_GCP_URI);
-        let rsp = client.request(req).await.map_err(Error::ConnectionError)?;
+        let rsp = client
+            .request(req)
+            .await
+            .map_err(|err| Error::ConnectionError(err.message().to_string()))?;
 
         let (_, body) = rsp.into_parts();
         let body = hyper::body::to_bytes(body)
             .await
-            .map_err(Error::ConnectionError)?;
+            .map_err(|err| Error::ConnectionError(err.message().to_string()))?;
         match str::from_utf8(&body) {
             Ok(s) => Ok(s.to_owned()),
             Err(_) => Err(Error::ProjectIdNonUtf8),

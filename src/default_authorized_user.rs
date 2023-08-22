@@ -29,7 +29,7 @@ impl ConfigDefaultCredentials {
 
         let file = fs::File::open(home).map_err(Error::UserProfilePath)?;
         let credentials = serde_json::from_reader::<_, UserCredentials>(file)
-            .map_err(Error::UserProfileFormat)?;
+            .map_err(|_ /*potentially sensitive */| Error::UserProfileFormat)?;
 
         Ok(Self {
             token: RwLock::new(Self::get_token(&credentials, client).await?),
@@ -66,7 +66,7 @@ impl ConfigDefaultCredentials {
             tracing::warn!("Failed to get token from GCP oauth2 token endpoint, trying again...");
             retries += 1;
             if retries >= RETRY_COUNT {
-                return Err(Error::OAuthConnectionError(err));
+                return Err(Error::OAuthConnectionError(err.message().to_string()));
             }
         };
 

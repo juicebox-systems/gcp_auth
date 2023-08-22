@@ -42,7 +42,7 @@ impl CustomServiceAccount {
         let file = std::fs::File::open(path.as_ref()).map_err(Error::CustomServiceAccountPath)?;
         match serde_json::from_reader::<_, ApplicationCredentials>(file) {
             Ok(credentials) => Self::new(credentials),
-            Err(e) => Err(Error::CustomServiceAccountCredentials(e)),
+            Err(_ /* potentially sensitive */) => Err(Error::CustomServiceAccountCredentials),
         }
     }
 
@@ -50,7 +50,7 @@ impl CustomServiceAccount {
     pub fn from_json(s: &str) -> Result<Self, Error> {
         match serde_json::from_str::<ApplicationCredentials>(s) {
             Ok(credentials) => Self::new(credentials),
-            Err(e) => Err(Error::CustomServiceAccountCredentials(e)),
+            Err(_ /* potentially sensitive */) => Err(Error::CustomServiceAccountCredentials),
         }
     }
 
@@ -123,7 +123,7 @@ impl ServiceAccount for CustomServiceAccount {
             );
             retries += 1;
             if retries >= RETRY_COUNT {
-                return Err(Error::OAuthConnectionError(err));
+                return Err(Error::OAuthConnectionError(err.message().to_string()));
             }
         };
 

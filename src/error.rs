@@ -20,8 +20,8 @@ pub enum Error {
     TlsError(#[source] rustls::Error),
 
     /// Error when establishing connection to OAuth server
-    #[error("Could not establish connection with OAuth server")]
-    OAuthConnectionError(#[source] hyper::Error),
+    #[error("Could not establish connection with OAuth server: {0}")]
+    OAuthConnectionError(String),
 
     /// Wrong path to custom service account credentials provided
     ///
@@ -35,7 +35,7 @@ pub enum Error {
     /// By default, the custom service account credentials are parsed from the path pointed to by the
     /// `GOOGLE_APPLICATION_CREDENTIALS` environment variable.
     #[error("Application profile provided in `GOOGLE_APPLICATION_CREDENTIALS` was not parsable")]
-    CustomServiceAccountCredentials(#[source] serde_json::error::Error),
+    CustomServiceAccountCredentials,
 
     /// Default user profile not found
     ///
@@ -46,15 +46,15 @@ pub enum Error {
 
     /// Wrong format of user profile
     #[error("User profile was not parsable")]
-    UserProfileFormat(#[source] serde_json::error::Error),
+    UserProfileFormat,
 
     /// Could not connect to  server
-    #[error("Could not establish connection with server")]
-    ConnectionError(#[source] hyper::Error),
+    #[error("Could not establish connection with server: {0}")]
+    ConnectionError(String),
 
     /// Could not parse response from server
     #[error("Could not parse server response")]
-    ParsingError(#[source] serde_json::error::Error),
+    ParsingError,
 
     /// Could not connect to server
     #[error("Server unavailable: {0}")]
