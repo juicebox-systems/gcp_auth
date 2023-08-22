@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::authentication_manager::ServiceAccount;
 use crate::error::Error;
-use crate::types::{HyperClient, Signer, Token};
+use crate::types::{HyperClient, SecretString, Signer, Token};
 use crate::util::HyperExt;
 
 /// A custom service account containing credentials
@@ -73,7 +73,7 @@ impl CustomServiceAccount {
     }
 
     /// The private key as found in the credentials
-    pub fn private_key_pem(&self) -> &str {
+    pub fn private_key_pem(&self) -> &SecretString {
         &self.credentials.private_key
     }
 }
@@ -101,7 +101,7 @@ impl ServiceAccount for CustomServiceAccount {
 
         let jwt = Claims::new(&self.credentials, scopes, None).to_jwt(&self.signer)?;
         let rqbody = form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(&[("grant_type", GRANT_TYPE), ("assertion", jwt.as_str())])
+            .extend_pairs(&[("grant_type", GRANT_TYPE), ("assertion", jwt.secret())])
             .finish();
 
         let mut retries = 0;
@@ -143,7 +143,7 @@ pub(crate) struct ApplicationCredentials {
     /// private_key_id
     pub(crate) private_key_id: Option<String>,
     /// private_key
-    pub(crate) private_key: String,
+    pub(crate) private_key: SecretString,
     /// client_email
     pub(crate) client_email: String,
     /// client_id

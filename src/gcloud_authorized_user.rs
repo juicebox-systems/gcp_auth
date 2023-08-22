@@ -9,7 +9,7 @@ use which::which;
 use crate::authentication_manager::ServiceAccount;
 use crate::error::Error;
 use crate::error::Error::{GCloudError, GCloudNotFound, GCloudParseError};
-use crate::types::HyperClient;
+use crate::types::{HyperClient, SecretString};
 use crate::Token;
 
 /// The default number of seconds that it takes for a Google Cloud auth token to expire.
@@ -38,7 +38,7 @@ impl GCloudAuthorizedUser {
 
     fn token(gcloud: &Path) -> Result<Token, Error> {
         Ok(Token::from_string(
-            run(gcloud, &["auth", "print-access-token", "--quiet"])?,
+            SecretString::from(run(gcloud, &["auth", "print-access-token", "--quiet"])?),
             DEFAULT_TOKEN_DURATION,
         ))
     }
@@ -104,11 +104,11 @@ mod tests {
     /// functionality is tested here.
     #[test]
     fn test_token_from_string() {
-        let s = String::from("abc123");
+        let s = SecretString::from(String::from("abc123"));
         let token = Token::from_string(s, DEFAULT_TOKEN_DURATION);
         let expires = OffsetDateTime::now_utc() + DEFAULT_TOKEN_DURATION;
 
-        assert_eq!(token.as_str(), "abc123");
+        assert_eq!(token.secret(), "abc123");
         assert!(!token.has_expired());
         assert!(token.expires_at() < expires + Duration::seconds(1));
         assert!(token.expires_at() > expires - Duration::seconds(1));
