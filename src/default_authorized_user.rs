@@ -46,7 +46,7 @@ impl ConfigDefaultCredentials {
             .unwrap()
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(level = "trace", skip_all)]
     async fn get_token(cred: &UserCredentials, client: &HyperClient) -> Result<Token, Error> {
         let mut retries = 0;
         let response = loop {
@@ -63,9 +63,7 @@ impl ConfigDefaultCredentials {
                 Err(err) => err,
             };
 
-            tracing::warn!(
-                "Failed to get token from GCP oauth2 token endpoint: {err}, trying again..."
-            );
+            tracing::warn!("Failed to get token from GCP oauth2 token endpoint, trying again...");
             retries += 1;
             if retries >= RETRY_COUNT {
                 return Err(Error::OAuthConnectionError(err));

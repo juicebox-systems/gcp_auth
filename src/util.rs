@@ -22,11 +22,7 @@ impl HyperExt for hyper::Response<hyper::body::Body> {
             .map_err(Error::ConnectionError)?;
 
         if !parts.status.is_success() {
-            let error = format!(
-                "Server responded with error {}: {}",
-                parts.status,
-                String::from_utf8_lossy(body.as_ref())
-            );
+            let error = format!("Server responded with error {}", parts.status);
             tracing::error!("{}", error);
             return Err(Error::ServerUnavailable(error));
         }

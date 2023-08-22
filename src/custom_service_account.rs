@@ -92,7 +92,7 @@ impl ServiceAccount for CustomServiceAccount {
         self.tokens.read().unwrap().get(&key).cloned()
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(level = "trace", skip_all)]
     async fn refresh_token(&self, client: &HyperClient, scopes: &[&str]) -> Result<Token, Error> {
         use crate::jwt::Claims;
         use crate::jwt::GRANT_TYPE;
@@ -111,7 +111,7 @@ impl ServiceAccount for CustomServiceAccount {
                 .body(hyper::Body::from(rqbody.clone()))
                 .unwrap();
 
-            tracing::debug!("requesting token from service account: {request:?}");
+            tracing::debug!("requesting token from service account");
             let err = match client.request(request).await {
                 // Early return when the request succeeds
                 Ok(response) => break response,
@@ -119,7 +119,7 @@ impl ServiceAccount for CustomServiceAccount {
             };
 
             tracing::warn!(
-                "Failed to refresh token with GCP oauth2 token endpoint: {err}, trying again..."
+                "Failed to refresh token with GCP oauth2 token endpoint, trying again..."
             );
             retries += 1;
             if retries >= RETRY_COUNT {

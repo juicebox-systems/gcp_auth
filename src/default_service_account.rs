@@ -34,7 +34,7 @@ impl MetadataServiceAccount {
             .unwrap()
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(level = "trace", skip_all)]
     async fn get_token(client: &HyperClient) -> Result<Token, Error> {
         let mut retries = 0;
         tracing::debug!("Getting token from GCP instance metadata server");
@@ -48,7 +48,7 @@ impl MetadataServiceAccount {
             };
 
             tracing::warn!(
-                "Failed to get token from GCP instance metadata server: {err}, trying again..."
+                "Failed to get token from GCP instance metadata server, trying again..."
             );
             retries += 1;
             if retries >= RETRY_COUNT {
