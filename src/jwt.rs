@@ -1,5 +1,8 @@
 //! Copyright (c) 2016 Google Inc (lewinb@google.com).
 
+use std::convert::TryFrom;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use base64::{engine::general_purpose::URL_SAFE, Engine};
 use serde::Serialize;
 
@@ -31,7 +34,13 @@ impl<'a> Claims<'a> {
     where
         T: std::string::ToString,
     {
-        let iat = time::OffsetDateTime::now_utc().unix_timestamp();
+        let iat = i64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .unwrap();
         let expiry = iat + 3600 - 5; // Max validity is 1h.
 
         let scope: String = scopes
