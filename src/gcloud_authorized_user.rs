@@ -4,11 +4,10 @@ use std::sync::RwLock;
 
 use async_trait::async_trait;
 use time::Duration;
-use which::which;
 
 use crate::authentication_manager::ServiceAccount;
 use crate::error::Error;
-use crate::error::Error::{GCloudError, GCloudNotFound, GCloudParseError};
+use crate::error::Error::{GCloudError, GCloudParseError};
 use crate::types::{HyperClient, SecretString};
 use crate::Token;
 
@@ -26,7 +25,7 @@ pub(crate) struct GCloudAuthorizedUser {
 
 impl GCloudAuthorizedUser {
     pub(crate) async fn new() -> Result<Self, Error> {
-        let gcloud = which("gcloud").map_err(|_| GCloudNotFound)?;
+        let gcloud = PathBuf::from("gcloud");
         let project_id = run(&gcloud, &["config", "get-value", "project"]).ok();
         let token = RwLock::new(Self::token(&gcloud)?);
         Ok(Self {
