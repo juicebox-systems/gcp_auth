@@ -8,7 +8,7 @@ keywords = ["authentication", "gcp", "google"]
 categories = ["asynchronous", "authentication"]
 readme = "README.md"
 license = "MIT"
-edition = "2018"
+edition = "2021"
 
 [features]
 default = ["hyper-rustls/rustls-native-certs"]

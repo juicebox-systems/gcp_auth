@@ -1,6 +1,5 @@
 //! Copyright (c) 2016 Google Inc (lewinb@google.com).
 
-use std::convert::TryFrom;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE, Engine};
