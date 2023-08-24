@@ -8,7 +8,7 @@ keywords = ["authentication", "gcp", "google"]
 categories = ["asynchronous", "authentication"]
 readme = "README.md"
 license = "MIT"
-edition = "2018"
+edition = "2021"
 
 [features]
 default = ["hyper-rustls/rustls-native-certs"]
@@ -17,7 +17,7 @@ webpki-roots = ["hyper-rustls/webpki-roots"]
 [dependencies]
 async-trait = "0.1"
 base64 = "0.21"
-dirs-next = "2.0"
+home = "0.5.5"
 hyper = { version = "0.14.2", features = ["client", "runtime", "http2"] }
 hyper-rustls = { version = "0.24", default-features = false, features = ["tokio-runtime", "http1", "http2"] }
 ring = "0.16.20"
@@ -26,12 +26,11 @@ rustls-pemfile = "1.0.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 thiserror = "1.0"
-time = { version = "0.3.5", features = ["serde"] }
 tokio = { version = "1.1", features = ["fs", "sync"] }
 tracing = "0.1.29"
 tracing-futures = "0.2.5"
 url = "2"
-which = "4.2"
+zeroize = "1.6.0"
 
 [dev-dependencies]
 env_logger = "0.10"

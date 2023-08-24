@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::authentication_manager::ServiceAccount;
 use crate::error::Error;
-use crate::types::{HyperClient, Signer, Token};
+use crate::types::{HyperClient, SecretString, Signer, Token};
 use crate::util::HyperExt;
 
 /// A custom service account containing credentials
@@ -42,7 +42,7 @@ impl CustomServiceAccount {
         let file = std::fs::File::open(path.as_ref()).map_err(Error::CustomServiceAccountPath)?;
         match serde_json::from_reader::<_, ApplicationCredentials>(file) {
             Ok(credentials) => Self::new(credentials),
-            Err(e) => Err(Error::CustomServiceAccountCredentials(e)),
+            Err(_ /* potentially sensitive */) => Err(Error::CustomServiceAccountCredentials),
         }
     }
 
@@ -50,7 +50,7 @@ impl CustomServiceAccount {
     pub fn from_json(s: &str) -> Result<Self, Error> {
         match serde_json::from_str::<ApplicationCredentials>(s) {
             Ok(credentials) => Self::new(credentials),
-            Err(e) => Err(Error::CustomServiceAccountCredentials(e)),
+            Err(_ /* potentially sensitive */) => Err(Error::CustomServiceAccountCredentials),
         }
     }
 
@@ -73,7 +73,7 @@ impl CustomServiceAccount {
     }
 
     /// The private key as found in the credentials
-    pub fn private_key_pem(&self) -> &str {
+    pub fn private_key_pem(&self) -> &SecretString {
         &self.credentials.private_key
     }
 }
@@ -92,7 +92,7 @@ impl ServiceAccount for CustomServiceAccount {
         self.tokens.read().unwrap().get(&key).cloned()
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(level = "trace", skip_all)]
     async fn refresh_token(&self, client: &HyperClient, scopes: &[&str]) -> Result<Token, Error> {
         use crate::jwt::Claims;
         use crate::jwt::GRANT_TYPE;
@@ -101,7 +101,7 @@ impl ServiceAccount for CustomServiceAccount {
 
         let jwt = Claims::new(&self.credentials, scopes, None).to_jwt(&self.signer)?;
         let rqbody = form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(&[("grant_type", GRANT_TYPE), ("assertion", jwt.as_str())])
+            .extend_pairs(&[("grant_type", GRANT_TYPE), ("assertion", jwt.secret())])
             .finish();
 
         let mut retries = 0;
@@ -111,7 +111,7 @@ impl ServiceAccount for CustomServiceAccount {
                 .body(hyper::Body::from(rqbody.clone()))
                 .unwrap();
 
-            tracing::debug!("requesting token from service account: {request:?}");
+            tracing::debug!("requesting token from service account");
             let err = match client.request(request).await {
                 // Early return when the request succeeds
                 Ok(response) => break response,
@@ -119,11 +119,11 @@ impl ServiceAccount for CustomServiceAccount {
             };
 
             tracing::warn!(
-                "Failed to refresh token with GCP oauth2 token endpoint: {err}, trying again..."
+                "Failed to refresh token with GCP oauth2 token endpoint, trying again..."
             );
             retries += 1;
             if retries >= RETRY_COUNT {
-                return Err(Error::OAuthConnectionError(err));
+                return Err(Error::OAuthConnectionError(err.message().to_string()));
             }
         };
 
@@ -143,7 +143,7 @@ pub(crate) struct ApplicationCredentials {
     /// private_key_id
     pub(crate) private_key_id: Option<String>,
     /// private_key
-    pub(crate) private_key: String,
+    pub(crate) private_key: SecretString,
     /// client_email
     pub(crate) client_email: String,
     /// client_id

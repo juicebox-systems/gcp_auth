@@ -9,9 +9,43 @@ use ring::{
 };
 use serde::Deserializer;
 use serde::{Deserialize, Serialize};
-use time::{Duration, OffsetDateTime};
+use std::time::{Duration, SystemTime};
+use zeroize::Zeroize;
 
 use crate::Error;
+
+/// A string that contains a secret value.
+///
+/// This type ensures the secret is not leaked through `Debug` (it prints
+/// "(redacted)") or `Display` (which it doesn't implement). It also zeroes out
+/// the secret in memory on `Drop`.
+#[derive(Clone, Deserialize, Serialize)]
+pub struct SecretString(String);
+
+impl Drop for SecretString {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("(redacted)")
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(secret: String) -> Self {
+        Self(secret)
+    }
+}
+
+impl SecretString {
+    pub fn secret(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Represents an access token. All access tokens are Bearer tokens.
 ///
 /// Tokens should not be cached, the [`AuthenticationManager`] handles the correct caching
@@ -19,23 +53,23 @@ use crate::Error;
 ///
 /// The token does not implement [`Display`] to avoid accidentally printing the token in log
 /// files, likewise [`Debug`] does not expose the token value itself which is only available
-/// using the [Token::`as_str`] method.
+/// using the [Token::`secret`] method.
 ///
 /// [`AuthenticationManager`]: crate::AuthenticationManager
 /// [`Display`]: fmt::Display
 /// [`Debug`]: fmt::Debug
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(Clone, Deserialize)]
 pub struct Token {
     #[serde(flatten)]
     inner: Arc<InnerToken>,
 }
 
 impl Token {
-    pub(crate) fn from_string(access_token: String, expires_in: Duration) -> Self {
+    pub(crate) fn from_string(access_token: SecretString, expires_in: Duration) -> Self {
         Token {
             inner: Arc::new(InnerToken {
                 access_token,
-                expires_at: OffsetDateTime::now_utc() + expires_in,
+                expires_at: SystemTime::now() + expires_in,
             }),
         }
     }
@@ -50,14 +84,14 @@ impl fmt::Debug for Token {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(Clone, Deserialize)]
 struct InnerToken {
-    access_token: String,
+    access_token: SecretString,
     #[serde(
         deserialize_with = "deserialize_time",
         rename(deserialize = "expires_in")
     )]
-    expires_at: OffsetDateTime,
+    expires_at: SystemTime,
 }
 
 impl Token {
@@ -72,16 +106,16 @@ impl Token {
     /// The docs state, the metadata server caches tokens until 5 minutes before expiry.
     /// We use 20s to be on the safe side.
     pub fn has_expired(&self) -> bool {
-        self.inner.expires_at - Duration::seconds(20) <= OffsetDateTime::now_utc()
+        self.inner.expires_at - Duration::from_secs(20) <= SystemTime::now()
     }
 
     /// Get str representation of the token.
-    pub fn as_str(&self) -> &str {
-        &self.inner.access_token
+    pub fn secret(&self) -> &str {
+        self.inner.access_token.secret()
     }
 
     /// Get expiry of token, if available
-    pub fn expires_at(&self) -> OffsetDateTime {
+    pub fn expires_at(&self) -> SystemTime {
         self.inner.expires_at
     }
 }
@@ -93,8 +127,8 @@ pub struct Signer {
 }
 
 impl Signer {
-    pub(crate) fn new(pem_pkcs8: &str) -> Result<Self, Error> {
-        let private_keys = rustls_pemfile::pkcs8_private_keys(&mut pem_pkcs8.as_bytes());
+    pub(crate) fn new(pem_pkcs8: &SecretString) -> Result<Self, Error> {
+        let private_keys = rustls_pemfile::pkcs8_private_keys(&mut pem_pkcs8.secret().as_bytes());
 
         let key = match private_keys {
             Ok(mut keys) if !keys.is_empty() => {
@@ -139,12 +173,12 @@ impl fmt::Debug for Signer {
     }
 }
 
-fn deserialize_time<'de, D>(deserializer: D) -> Result<OffsetDateTime, D::Error>
+fn deserialize_time<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let seconds_from_now: i64 = Deserialize::deserialize(deserializer)?;
-    Ok(OffsetDateTime::now_utc() + Duration::seconds(seconds_from_now))
+    let seconds_from_now: u64 = Deserialize::deserialize(deserializer)?;
+    Ok(SystemTime::now() + Duration::from_secs(seconds_from_now))
 }
 
 pub(crate) fn client() -> HyperClient {
@@ -164,32 +198,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_serialise() {
-        let token = Token {
-            inner: Arc::new(InnerToken {
-                access_token: "abc123".to_string(),
-                expires_at: OffsetDateTime::from_unix_timestamp(123).unwrap(),
-            }),
-        };
-        let s = serde_json::to_string(&token).unwrap();
-
-        assert_eq!(
-            s,
-            r#"{"access_token":"abc123","expires_at":[1970,1,0,2,3,0,0,0,0]}"#
-        );
-    }
-
-    #[test]
     fn test_deserialise_with_time() {
         let s = r#"{"access_token":"abc123","expires_in":100}"#;
         let token: Token = serde_json::from_str(s).unwrap();
-        let expires = OffsetDateTime::now_utc() + Duration::seconds(100);
+        let expires = SystemTime::now() + Duration::from_secs(100);
 
-        assert_eq!(token.as_str(), "abc123");
+        assert_eq!(token.secret(), "abc123");
 
         // Testing time is always racy, give it 1s leeway.
         let expires_at = token.expires_at();
-        assert!(expires_at < expires + Duration::seconds(1));
-        assert!(expires_at > expires - Duration::seconds(1));
+        assert!(expires_at < expires + Duration::from_secs(1));
+        assert!(expires_at > expires - Duration::from_secs(1));
     }
 }

@@ -2,13 +2,14 @@ use std::fs;
 use std::sync::RwLock;
 
 use async_trait::async_trait;
+use home::home_dir;
 use hyper::body::Body;
 use hyper::{Method, Request};
 use serde::{Deserialize, Serialize};
 
 use crate::authentication_manager::ServiceAccount;
 use crate::error::Error;
-use crate::types::{HyperClient, Token};
+use crate::types::{HyperClient, SecretString, Token};
 use crate::util::HyperExt;
 
 #[derive(Debug)]
@@ -24,12 +25,12 @@ impl ConfigDefaultCredentials {
 
     pub(crate) async fn new(client: &HyperClient) -> Result<Self, Error> {
         tracing::debug!("Loading user credentials file");
-        let mut home = dirs_next::home_dir().ok_or(Error::NoHomeDir)?;
+        let mut home = home_dir().ok_or(Error::NoHomeDir)?;
         home.push(Self::USER_CREDENTIALS_PATH);
 
         let file = fs::File::open(home).map_err(Error::UserProfilePath)?;
         let credentials = serde_json::from_reader::<_, UserCredentials>(file)
-            .map_err(Error::UserProfileFormat)?;
+            .map_err(|_ /*potentially sensitive */| Error::UserProfileFormat)?;
 
         Ok(Self {
             token: RwLock::new(Self::get_token(&credentials, client).await?),
@@ -46,7 +47,7 @@ impl ConfigDefaultCredentials {
             .unwrap()
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(level = "trace", skip_all)]
     async fn get_token(cred: &UserCredentials, client: &HyperClient) -> Result<Token, Error> {
         let mut retries = 0;
         let response = loop {
@@ -63,12 +64,10 @@ impl ConfigDefaultCredentials {
                 Err(err) => err,
             };
 
-            tracing::warn!(
-                "Failed to get token from GCP oauth2 token endpoint: {err}, trying again..."
-            );
+            tracing::warn!("Failed to get token from GCP oauth2 token endpoint, trying again...");
             retries += 1;
             if retries >= RETRY_COUNT {
-                return Err(Error::OAuthConnectionError(err));
+                return Err(Error::OAuthConnectionError(err.message().to_string()));
             }
         };
 
@@ -99,9 +98,9 @@ impl ServiceAccount for ConfigDefaultCredentials {
 #[derive(Serialize, Debug)]
 struct RefreshRequest<'a> {
     client_id: &'a str,
-    client_secret: &'a str,
+    client_secret: &'a SecretString,
     grant_type: &'a str,
-    refresh_token: &'a str,
+    refresh_token: &'a SecretString,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -109,11 +108,11 @@ struct UserCredentials {
     /// Client id
     pub(crate) client_id: String,
     /// Client secret
-    pub(crate) client_secret: String,
+    pub(crate) client_secret: SecretString,
     /// Project ID
     pub(crate) quota_project_id: Option<String>,
     /// Refresh Token
-    pub(crate) refresh_token: String,
+    pub(crate) refresh_token: SecretString,
     /// Type
     pub(crate) r#type: String,
 }

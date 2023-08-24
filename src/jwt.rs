@@ -1,11 +1,13 @@
 //! Copyright (c) 2016 Google Inc (lewinb@google.com).
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use base64::{engine::general_purpose::URL_SAFE, Engine};
 use serde::Serialize;
 
 use crate::custom_service_account::ApplicationCredentials;
 use crate::error::Error;
-use crate::types::Signer;
+use crate::types::{SecretString, Signer};
 
 pub(crate) const GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 const GOOGLE_RS256_HEAD: &str = r#"{"alg":"RS256","typ":"JWT"}"#;
@@ -31,7 +33,13 @@ impl<'a> Claims<'a> {
     where
         T: std::string::ToString,
     {
-        let iat = time::OffsetDateTime::now_utc().unix_timestamp();
+        let iat = i64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .unwrap();
         let expiry = iat + 3600 - 5; // Max validity is 1h.
 
         let scope: String = scopes
@@ -49,7 +57,7 @@ impl<'a> Claims<'a> {
         }
     }
 
-    pub(crate) fn to_jwt(&self, signer: &Signer) -> Result<String, Error> {
+    pub(crate) fn to_jwt(&self, signer: &Signer) -> Result<SecretString, Error> {
         let mut jwt = String::new();
         URL_SAFE.encode_string(GOOGLE_RS256_HEAD, &mut jwt);
         jwt.push('.');
@@ -58,6 +66,6 @@ impl<'a> Claims<'a> {
         let signature = signer.sign(jwt.as_bytes())?;
         jwt.push('.');
         URL_SAFE.encode_string(&signature, &mut jwt);
-        Ok(jwt)
+        Ok(SecretString::from(jwt))
     }
 }

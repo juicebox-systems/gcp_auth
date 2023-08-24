@@ -40,7 +40,7 @@ impl AuthenticationManager {
     ///    if it succeeds, use the default service account as the token source.
     /// 4. Check if the `gcloud` tool is available on the `PATH`; if so, use the
     ///    `gcloud auth print-access-token` command as the token source.
-    #[tracing::instrument]
+    #[tracing::instrument(level = "trace", skip_all)]
     pub async fn new() -> Result<Self, Error> {
         tracing::debug!("Initializing gcp_auth");
         if let Some(service_account) = CustomServiceAccount::from_env()? {
