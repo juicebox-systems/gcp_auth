@@ -1,5 +1,10 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+
 use async_trait::async_trait;
 use tokio::sync::Mutex;
+use tracing::{debug, info, warn};
 
 use crate::custom_service_account::CustomServiceAccount;
 use crate::default_authorized_user::ConfigDefaultCredentials;
@@ -21,10 +26,13 @@ pub(crate) trait ServiceAccount: Send + Sync {
 /// Construct the authentication manager with [`AuthenticationManager::new()`] or by creating
 /// a [`CustomServiceAccount`], then converting it into an `AuthenticationManager` using the `From`
 /// impl.
-pub struct AuthenticationManager {
-    pub(crate) client: HyperClient,
-    pub(crate) service_account: Box<dyn ServiceAccount>,
+pub struct AuthenticationManager(Arc<AuthManagerInner>);
+
+struct AuthManagerInner {
+    client: HyperClient,
+    service_account: Box<dyn ServiceAccount>,
     refresh_mutex: Mutex<()>,
+    background_refreshing: AtomicBool,
 }
 
 impl AuthenticationManager {
@@ -80,32 +88,65 @@ impl AuthenticationManager {
     }
 
     fn build(client: HyperClient, service_account: impl ServiceAccount + 'static) -> Self {
-        Self {
+        Self(Arc::new(AuthManagerInner {
             client,
             service_account: Box::new(service_account),
             refresh_mutex: Mutex::new(()),
-        }
+            background_refreshing: AtomicBool::new(false),
+        }))
     }
 
     /// Requests Bearer token for the provided scope
     ///
     /// Token can be used in the request authorization header in format "Bearer {token}"
-    pub async fn get_token(&self, scopes: &[&str]) -> Result<Token, Error> {
-        let token = self.service_account.get_token(scopes);
+    pub async fn get_token(&self, scopes: &'static [&'static str]) -> Result<Token, Error> {
+        let token = self.0.service_account.get_token(scopes);
+
         if let Some(token) = token.filter(|token| !token.has_expired()) {
+            let valid_for = token
+                .expires_at()
+                .duration_since(SystemTime::now())
+                .unwrap_or_default();
+            if valid_for < Duration::from_secs(60) {
+                debug!(?valid_for, "gcp_auth token expires soon!");
+                if self
+                    .0
+                    .background_refreshing
+                    .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    let inner = self.0.clone();
+                    tokio::spawn(async move {
+                        info!("gcp_auth starting background refresh of auth token");
+                        match inner
+                            .service_account
+                            .refresh_token(&inner.client, scopes)
+                            .await
+                        {
+                            Ok(t) => {
+                                info!(valid_for=?t.expires_at().duration_since(SystemTime::now()), "gcp auth completed background token refresh")
+                            }
+                            Err(err) => warn!(?err, "gcp_auth background token refresh failed"),
+                        }
+                        inner.background_refreshing.store(false, Ordering::Relaxed);
+                    });
+                }
+            }
             return Ok(token);
         }
 
-        let _guard = self.refresh_mutex.lock().await;
+        warn!("starting inline refresh of gcp auth token");
+        let _guard = self.0.refresh_mutex.lock().await;
 
         // Check if refresh happened while we were waiting.
-        let token = self.service_account.get_token(scopes);
+        let token = self.0.service_account.get_token(scopes);
         if let Some(token) = token.filter(|token| !token.has_expired()) {
             return Ok(token);
         }
 
-        self.service_account
-            .refresh_token(&self.client, scopes)
+        self.0
+            .service_account
+            .refresh_token(&self.0.client, scopes)
             .await
     }
 
@@ -113,7 +154,7 @@ impl AuthenticationManager {
     ///
     /// This is only available for service account-based authentication methods.
     pub async fn project_id(&self) -> Result<String, Error> {
-        self.service_account.project_id(&self.client).await
+        self.0.service_account.project_id(&self.0.client).await
     }
 }
 
