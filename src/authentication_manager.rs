@@ -1,3 +1,5 @@
+use std::collections::hash_map::Entry::{Occupied, Vacant};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -31,7 +33,7 @@ pub struct AuthenticationManager(Arc<AuthManagerInner>);
 struct AuthManagerInner {
     client: HyperClient,
     service_account: Box<dyn ServiceAccount>,
-    refresh_mutex: Arc<Mutex<()>>,
+    refresh_mutexes: Mutex<HashMap<Vec<String>, Arc<Mutex<()>>>>,
 }
 
 impl AuthenticationManager {
@@ -90,14 +92,14 @@ impl AuthenticationManager {
         Self(Arc::new(AuthManagerInner {
             client,
             service_account: Box::new(service_account),
-            refresh_mutex: Arc::new(Mutex::new(())),
+            refresh_mutexes: Mutex::new(HashMap::new()),
         }))
     }
 
     /// Requests Bearer token for the provided scope
     ///
     /// Token can be used in the request authorization header in format "Bearer {token}"
-    pub async fn get_token(&self, scopes: &'static [&'static str]) -> Result<Token, Error> {
+    pub async fn get_token(&self, scopes: &[&str]) -> Result<Token, Error> {
         let token = self.0.service_account.get_token(scopes);
 
         if let Some(token) = token.filter(|token| !token.has_expired()) {
@@ -108,9 +110,11 @@ impl AuthenticationManager {
             if valid_for < Duration::from_secs(60) {
                 debug!(?valid_for, "gcp_auth token expires soon!");
 
-                match self.0.refresh_mutex.clone().try_lock_owned() {
+                let scopes: Vec<String> = scopes.iter().map(|s| s.to_string()).collect();
+                let lock = self.lock_for_scopes(scopes.clone()).await;
+                match lock.try_lock_owned() {
                     Err(_) => {
-                        // failed to take the lock, something is already doing a refresh.
+                        // already being refreshed.
                     }
                     Ok(guard) => {
                         let inner = self.clone();
@@ -119,12 +123,14 @@ impl AuthenticationManager {
                         });
                     }
                 }
+                return Ok(token);
             }
-            return Ok(token);
         }
 
         warn!("starting inline refresh of gcp auth token");
-        let _guard = self.0.refresh_mutex.lock().await;
+        let scopes_key: Vec<_> = scopes.iter().map(|s| s.to_string()).collect();
+        let lock = self.lock_for_scopes(scopes_key).await;
+        let _guard = lock.lock().await;
 
         // Check if refresh happened while we were waiting.
         let token = self.0.service_account.get_token(scopes);
@@ -138,16 +144,25 @@ impl AuthenticationManager {
             .await
     }
 
-    async fn background_refresh(
-        &self,
-        scopes: &'static [&'static str],
-        _lock: OwnedMutexGuard<()>,
-    ) {
+    async fn lock_for_scopes(&self, scopes: Vec<String>) -> Arc<Mutex<()>> {
+        let mut scope_locks = self.0.refresh_mutexes.lock().await;
+        match scope_locks.entry(scopes) {
+            Occupied(e) => e.get().clone(),
+            Vacant(v) => {
+                let lock = Arc::new(Mutex::new(()));
+                v.insert(lock.clone());
+                lock
+            }
+        }
+    }
+
+    async fn background_refresh(&self, scopes: Vec<String>, _lock: OwnedMutexGuard<()>) {
         info!("gcp_auth starting background refresh of auth token");
+        let scope_refs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
         match self
             .0
             .service_account
-            .refresh_token(&self.0.client, scopes)
+            .refresh_token(&self.0.client, &scope_refs)
             .await
         {
             Ok(t) => {
