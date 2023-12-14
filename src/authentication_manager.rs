@@ -1,9 +1,8 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, info, warn};
 
 use crate::custom_service_account::CustomServiceAccount;
@@ -26,13 +25,13 @@ pub(crate) trait ServiceAccount: Send + Sync {
 /// Construct the authentication manager with [`AuthenticationManager::new()`] or by creating
 /// a [`CustomServiceAccount`], then converting it into an `AuthenticationManager` using the `From`
 /// impl.
+#[derive(Clone)]
 pub struct AuthenticationManager(Arc<AuthManagerInner>);
 
 struct AuthManagerInner {
     client: HyperClient,
     service_account: Box<dyn ServiceAccount>,
-    refresh_mutex: Mutex<()>,
-    background_refreshing: AtomicBool,
+    refresh_mutex: Arc<Mutex<()>>,
 }
 
 impl AuthenticationManager {
@@ -91,8 +90,7 @@ impl AuthenticationManager {
         Self(Arc::new(AuthManagerInner {
             client,
             service_account: Box::new(service_account),
-            refresh_mutex: Mutex::new(()),
-            background_refreshing: AtomicBool::new(false),
+            refresh_mutex: Arc::new(Mutex::new(())),
         }))
     }
 
@@ -109,27 +107,17 @@ impl AuthenticationManager {
                 .unwrap_or_default();
             if valid_for < Duration::from_secs(60) {
                 debug!(?valid_for, "gcp_auth token expires soon!");
-                if self
-                    .0
-                    .background_refreshing
-                    .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                    .is_ok()
-                {
-                    let inner = self.0.clone();
-                    tokio::spawn(async move {
-                        info!("gcp_auth starting background refresh of auth token");
-                        match inner
-                            .service_account
-                            .refresh_token(&inner.client, scopes)
-                            .await
-                        {
-                            Ok(t) => {
-                                info!(valid_for=?t.expires_at().duration_since(SystemTime::now()), "gcp auth completed background token refresh")
-                            }
-                            Err(err) => warn!(?err, "gcp_auth background token refresh failed"),
-                        }
-                        inner.background_refreshing.store(false, Ordering::Relaxed);
-                    });
+
+                match self.0.refresh_mutex.clone().try_lock_owned() {
+                    Err(_) => {
+                        // failed to take the lock, something is already doing a refresh.
+                    }
+                    Ok(guard) => {
+                        let inner = self.clone();
+                        tokio::spawn(async move {
+                            inner.background_refresh(scopes, guard).await;
+                        });
+                    }
                 }
             }
             return Ok(token);
@@ -148,6 +136,25 @@ impl AuthenticationManager {
             .service_account
             .refresh_token(&self.0.client, scopes)
             .await
+    }
+
+    async fn background_refresh(
+        &self,
+        scopes: &'static [&'static str],
+        _lock: OwnedMutexGuard<()>,
+    ) {
+        info!("gcp_auth starting background refresh of auth token");
+        match self
+            .0
+            .service_account
+            .refresh_token(&self.0.client, scopes)
+            .await
+        {
+            Ok(t) => {
+                info!(valid_for=?t.expires_at().duration_since(SystemTime::now()), "gcp auth completed background token refresh")
+            }
+            Err(err) => warn!(?err, "gcp_auth background token refresh failed"),
+        }
     }
 
     /// Request the project ID for the authenticating account
