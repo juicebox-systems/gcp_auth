@@ -19,6 +19,12 @@ pub(crate) trait ServiceAccount: Send + Sync {
     async fn project_id(&self, client: &HyperClient) -> Result<String, Error>;
     fn get_token(&self, scopes: &[&str]) -> Option<Token>;
     async fn refresh_token(&self, client: &HyperClient, scopes: &[&str]) -> Result<Token, Error>;
+    fn get_style(&self) -> TokenStyle;
+}
+
+pub(crate) enum TokenStyle {
+    Account,
+    AccountAndScopes,
 }
 
 /// Authentication manager is responsible for caching and obtaining credentials for the required
@@ -33,7 +39,7 @@ pub struct AuthenticationManager(Arc<AuthManagerInner>);
 struct AuthManagerInner {
     client: HyperClient,
     service_account: Box<dyn ServiceAccount>,
-    refresh_mutexes: Mutex<HashMap<Vec<String>, Arc<Mutex<()>>>>,
+    refresh_lock: RefreshLock,
 }
 
 impl AuthenticationManager {
@@ -89,10 +95,11 @@ impl AuthenticationManager {
     }
 
     fn build(client: HyperClient, service_account: impl ServiceAccount + 'static) -> Self {
+        let refresh_lock = RefreshLock::new(service_account.get_style());
         Self(Arc::new(AuthManagerInner {
             client,
             service_account: Box::new(service_account),
-            refresh_mutexes: Mutex::new(HashMap::new()),
+            refresh_lock,
         }))
     }
 
@@ -110,26 +117,25 @@ impl AuthenticationManager {
             if valid_for < Duration::from_secs(60) {
                 debug!(?valid_for, "gcp_auth token expires soon!");
 
-                let scopes: Vec<String> = scopes.iter().map(|s| s.to_string()).collect();
-                let lock = self.lock_for_scopes(scopes.clone()).await;
+                let lock = self.0.refresh_lock.lock_for_scopes(scopes).await;
                 match lock.try_lock_owned() {
                     Err(_) => {
                         // already being refreshed.
                     }
                     Ok(guard) => {
                         let inner = self.clone();
+                        let scopes: Vec<String> = scopes.iter().map(|s| s.to_string()).collect();
                         tokio::spawn(async move {
                             inner.background_refresh(scopes, guard).await;
                         });
                     }
                 }
-                return Ok(token);
             }
+            return Ok(token);
         }
 
         warn!("starting inline refresh of gcp auth token");
-        let scopes_key: Vec<_> = scopes.iter().map(|s| s.to_string()).collect();
-        let lock = self.lock_for_scopes(scopes_key).await;
+        let lock = self.0.refresh_lock.lock_for_scopes(scopes).await;
         let _guard = lock.lock().await;
 
         // Check if refresh happened while we were waiting.
@@ -142,18 +148,6 @@ impl AuthenticationManager {
             .service_account
             .refresh_token(&self.0.client, scopes)
             .await
-    }
-
-    async fn lock_for_scopes(&self, scopes: Vec<String>) -> Arc<Mutex<()>> {
-        let mut scope_locks = self.0.refresh_mutexes.lock().await;
-        match scope_locks.entry(scopes) {
-            Occupied(e) => e.get().clone(),
-            Vacant(v) => {
-                let lock = Arc::new(Mutex::new(()));
-                v.insert(lock.clone());
-                lock
-            }
-        }
     }
 
     async fn background_refresh(&self, scopes: Vec<String>, _lock: OwnedMutexGuard<()>) {
@@ -183,5 +177,37 @@ impl AuthenticationManager {
 impl From<CustomServiceAccount> for AuthenticationManager {
     fn from(service_account: CustomServiceAccount) -> Self {
         Self::build(types::client(), service_account)
+    }
+}
+
+enum RefreshLock {
+    One(Arc<Mutex<()>>),
+    ByScopes(Mutex<HashMap<Vec<String>, Arc<Mutex<()>>>>),
+}
+
+impl RefreshLock {
+    fn new(style: TokenStyle) -> Self {
+        match style {
+            TokenStyle::Account => RefreshLock::One(Arc::new(Mutex::new(()))),
+            TokenStyle::AccountAndScopes => RefreshLock::ByScopes(Mutex::new(HashMap::new())),
+        }
+    }
+
+    async fn lock_for_scopes(&self, scopes: &[&str]) -> Arc<Mutex<()>> {
+        match self {
+            RefreshLock::One(mutex) => mutex.clone(),
+            RefreshLock::ByScopes(mutexes) => {
+                let scopes_key: Vec<_> = scopes.iter().map(|s| s.to_string()).collect();
+                let mut scope_locks = mutexes.lock().await;
+                match scope_locks.entry(scopes_key) {
+                    Occupied(e) => e.get().clone(),
+                    Vacant(v) => {
+                        let lock = Arc::new(Mutex::new(()));
+                        v.insert(lock.clone());
+                        lock
+                    }
+                }
+            }
+        }
     }
 }

@@ -7,7 +7,7 @@ use hyper::body::Body;
 use hyper::{Method, Request};
 use serde::{Deserialize, Serialize};
 
-use crate::authentication_manager::ServiceAccount;
+use crate::authentication_manager::{ServiceAccount, TokenStyle};
 use crate::error::Error;
 use crate::types::{HyperClient, SecretString, Token};
 use crate::util::HyperExt;
@@ -77,6 +77,10 @@ impl ConfigDefaultCredentials {
 
 #[async_trait]
 impl ServiceAccount for ConfigDefaultCredentials {
+    fn get_style(&self) -> TokenStyle {
+        TokenStyle::Account
+    }
+
     async fn project_id(&self, _: &HyperClient) -> Result<String, Error> {
         self.credentials
             .quota_project_id
